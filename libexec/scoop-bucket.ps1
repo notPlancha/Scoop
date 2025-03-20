@@ -64,6 +64,14 @@ switch ($cmd) {
             warn "No bucket found. Please run 'scoop bucket add main' to add the default 'main' bucket."
             exit 2
         } else {
+            Get-LocalBucket | ForEach-Object {
+                $bucketLoc = Find-BucketDirectory $_ -Root
+                if (Test-GitAvailable -and (Test-Path "$bucketLoc\.git")) {
+                    Write-Host "'$_' bucket:"
+                    Invoke-Git -Path $bucketLoc -ArgumentList @('log', 'HEAD', '-1', '--oneline')
+                    Write-Host ''
+                }
+            }
             $buckets
             exit 0
         }
