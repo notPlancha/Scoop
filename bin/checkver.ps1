@@ -142,24 +142,33 @@ $Queue | ForEach-Object {
     $useGithubAPI = $false
 
     # GitHub
-    if ($regex) {
-        $githubRegex = $regex
-    } else {
-        $githubRegex = '/releases/tag/(?:v|V)?([\d.]+)'
-    }
     if ($json.checkver -eq 'github') {
         if (!$json.homepage.StartsWith('https://github.com/')) {
             error "$name checkver expects the homepage to be a github repository"
         }
         $url = $json.homepage.TrimEnd('/') + '/releases/latest'
-        $regex = $githubRegex
+        $url = $url -replace '//(www\.)?github.com/', '//api.github.com/repos/'
         $useGithubAPI = $true
     }
 
     if ($json.checkver.github) {
         $url = $json.checkver.github.TrimEnd('/') + '/releases/latest'
-        $regex = $githubRegex
-        if ($json.checkver.PSObject.Properties.Count -eq 1) { $useGithubAPI = $true }
+        if ($json.checkver.PSObject.Properties.Count -eq 1) { 
+          $url = $url -replace '//(www\.)?github.com/', '//api.github.com/repos/'
+          $useGithubAPI = $true
+        }
+    }
+
+    if ($useGithubAPI) {
+      if (-not $jsonpath) {$jsonpath = '$.tag_name'}
+      if (-not $regex) {$regex = '[v|version]?(.+)$'}
+
+      $api_link = 'https://api.github.com/rate_limit'
+      $ret = (download_json $api_link).rate.remaining -eq 0
+      if ($ret) {
+        Write-Host "Couldn't check $name for updates, GitHub API rate limit reached. Configure your api key with 'scoop config gh_token <your token>'."
+        return 
+      }
     }
 
     # SourceForge
@@ -216,15 +225,7 @@ $Queue | ForEach-Object {
 
     $reverse = $json.checkver.reverse -and $json.checkver.reverse -eq 'true'
 
-    if ($url -like '*api.github.com/*') { $useGithubAPI = $true }
-
-    if ($useGithubAPI -and ($null -ne $GitHubToken)) {
-        $url = $url -replace '//(www\.)?github.com/', '//api.github.com/repos/'
-        $wc.Headers.Add('Authorization', "token $GitHubToken")
-    }
-
     $url = substitute $url $substitutions
-
     $state = New-Object psobject @{
         app      = $name
         file     = $file
@@ -236,7 +237,6 @@ $Queue | ForEach-Object {
         reverse  = $reverse
         replace  = $replace
     }
-
     get_config PRIVATE_HOSTS | Where-Object { $_ -ne $null -and $url -match $_.match } | ForEach-Object {
         (ConvertFrom-StringData -StringData $_.Headers).GetEnumerator() | ForEach-Object {
             $wc.Headers[$_.Key] = $_.Value
@@ -245,6 +245,14 @@ $Queue | ForEach-Object {
 
     $wc.Headers.Add('Referer', (strip_filename $url))
     $wc.DownloadDataAsync($url, $state)
+
+    # run github_ratelimit_reached
+
+    $api_link = 'https://api.github.com/rate_limit'
+    $ret = (download_json $api_link).rate.remaining -eq 0
+    if ($ret) {
+        Write-Host "GitHub API rate limit reached.`r`nPlease try again later or configure your API token using 'scoop config gh_token <your token>'."
+    }
 }
 
 function next($er) {
