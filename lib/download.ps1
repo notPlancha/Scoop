@@ -584,6 +584,9 @@ function Get-GitHubToken {
 function github_ratelimit_reached {
     $api_link = 'https://api.github.com/rate_limit'
     $ret = (download_json $api_link).rate.remaining -eq 0
+    if ($ret) {
+        Write-Host "GitHub API rate limit reached.`r`nPlease try again later or configure your API token using 'scoop config gh_token <your token>'."
+    }
     $ret
 }
 

@@ -85,6 +85,7 @@ if ($App -ne '*' -and (Test-Path $App -PathType Leaf)) {
     throw "'-Dir' parameter required if '-App' is not a filepath!"
 }
 
+$GitHubToken = Get-GitHubToken
 
 # don't use $Version with $App = '*'
 if ($App -eq '*' -and $Version -ne '') {
@@ -105,13 +106,6 @@ $files | ForEach-Object {
 # clear any existing events
 Get-Event | Remove-Event
 Get-EventSubscriber | Unregister-Event
-
-$GitHubToken = Get-GitHubToken
-if ($GitHubToken) {
-  $GHRateLimit = $false
-} else {
-  $GHRateLimit = github_ratelimit_reached
-}
 
 # start all downloads
 $Queue | ForEach-Object {
@@ -148,28 +142,24 @@ $Queue | ForEach-Object {
     $useGithubAPI = $false
 
     # GitHub
+    if ($regex) {
+        $githubRegex = $regex
+    } else {
+        $githubRegex = '/releases/tag/(?:v|V)?([\d.+0-9A-Za-z-]+)'
+    }
     if ($json.checkver -eq 'github') {
         if (!$json.homepage.StartsWith('https://github.com/')) {
             error "$name checkver expects the homepage to be a github repository"
         }
         $url = $json.homepage.TrimEnd('/') + '/releases/latest'
+        $regex = $githubRegex
         $useGithubAPI = $true
     }
 
     if ($json.checkver.github) {
         $url = $json.checkver.github.TrimEnd('/') + '/releases/latest'
-        if ($json.checkver.PSObject.Properties.Count -eq 1) { 
-          $useGithubAPI = $true
-        }
-    }
-
-    if ($useGithubAPI -and -not $GHRateLimit) {
-      $wc.Headers.Add('Authorization', "token $GitHubToken")
-      $url = $url -replace '//(www\.)?github.com/', '//api.github.com/repos/'
-      if (-not $jsonpath) {$jsonpath = '$.tag_name'}
-      if (-not $regex) {$regex = '[v|version]?(.+)$'}
-    } else {
-      if (-not $regex) {$regex = '/releases/tag/(?:v|V)?([\d.+0-9A-Za-z-]+)'}
+        $regex = $githubRegex
+        if ($json.checkver.PSObject.Properties.Count -eq 1) { $useGithubAPI = $true }
     }
 
     # SourceForge
@@ -226,7 +216,15 @@ $Queue | ForEach-Object {
 
     $reverse = $json.checkver.reverse -and $json.checkver.reverse -eq 'true'
 
+    if ($url -like '*api.github.com/*') { $useGithubAPI = $true }
+
+    if ($useGithubAPI -and ($null -ne $GitHubToken)) {
+        $url = $url -replace '//(www\.)?github.com/', '//api.github.com/repos/'
+        $wc.Headers.Add('Authorization', "token $GitHubToken")
+    }
+
     $url = substitute $url $substitutions
+
     $state = New-Object psobject @{
         app      = $name
         file     = $file
@@ -238,6 +236,7 @@ $Queue | ForEach-Object {
         reverse  = $reverse
         replace  = $replace
     }
+
     get_config PRIVATE_HOSTS | Where-Object { $_ -ne $null -and $url -match $_.match } | ForEach-Object {
         (ConvertFrom-StringData -StringData $_.Headers).GetEnumerator() | ForEach-Object {
             $wc.Headers[$_.Key] = $_.Value
