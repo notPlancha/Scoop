@@ -85,7 +85,6 @@ if ($App -ne '*' -and (Test-Path $App -PathType Leaf)) {
     throw "'-Dir' parameter required if '-App' is not a filepath!"
 }
 
-$GitHubToken = Get-GitHubToken
 
 # don't use $Version with $App = '*'
 if ($App -eq '*' -and $Version -ne '') {
@@ -106,6 +105,13 @@ $files | ForEach-Object {
 # clear any existing events
 Get-Event | Remove-Event
 Get-EventSubscriber | Unregister-Event
+
+$GitHubToken = Get-GitHubToken
+if ($GitHubToken) {
+  $GHRateLimit = $false
+} else {
+  $GHRateLimit = github_ratelimit_reached
+}
 
 # start all downloads
 $Queue | ForEach-Object {
@@ -147,28 +153,23 @@ $Queue | ForEach-Object {
             error "$name checkver expects the homepage to be a github repository"
         }
         $url = $json.homepage.TrimEnd('/') + '/releases/latest'
-        $url = $url -replace '//(www\.)?github.com/', '//api.github.com/repos/'
         $useGithubAPI = $true
     }
 
     if ($json.checkver.github) {
         $url = $json.checkver.github.TrimEnd('/') + '/releases/latest'
         if ($json.checkver.PSObject.Properties.Count -eq 1) { 
-          $url = $url -replace '//(www\.)?github.com/', '//api.github.com/repos/'
           $useGithubAPI = $true
         }
     }
 
-    if ($useGithubAPI) {
+    if ($useGithubAPI -and -not $GHRateLimit) {
+      $wc.Headers.Add('Authorization', "token $GitHubToken")
+      $url = $url -replace '//(www\.)?github.com/', '//api.github.com/repos/'
       if (-not $jsonpath) {$jsonpath = '$.tag_name'}
       if (-not $regex) {$regex = '[v|version]?(.+)$'}
-
-      $api_link = 'https://api.github.com/rate_limit'
-      $ret = (download_json $api_link).rate.remaining -eq 0
-      if ($ret) {
-        Write-Host "Couldn't check $name for updates, GitHub API rate limit reached. Configure your api key with 'scoop config gh_token <your token>'."
-        return 
-      }
+    } else {
+      if (-not $regex) {$regex = '/releases/tag/(?:v|V)?([\d.+0-9A-Za-z-]+)'}
     }
 
     # SourceForge
@@ -245,14 +246,6 @@ $Queue | ForEach-Object {
 
     $wc.Headers.Add('Referer', (strip_filename $url))
     $wc.DownloadDataAsync($url, $state)
-
-    # run github_ratelimit_reached
-
-    $api_link = 'https://api.github.com/rate_limit'
-    $ret = (download_json $api_link).rate.remaining -eq 0
-    if ($ret) {
-        Write-Host "GitHub API rate limit reached.`r`nPlease try again later or configure your API token using 'scoop config gh_token <your token>'."
-    }
 }
 
 function next($er) {

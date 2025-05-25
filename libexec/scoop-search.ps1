@@ -191,8 +191,11 @@ if ($list.Count -gt 0) {
     Write-Host 'Results from local buckets...'
     $list
 }
-
-if ($list.Count -eq 0 -and !(github_ratelimit_reached)) {
+$gh_rate_limited = ghub_ratelimit_reached
+if ($gh_rate_limited) {
+  Write-Host "GitHub API rate limit reached.`r`nPlease try again later or configure your API token using 'scoop config gh_token <your token>'."
+}
+if ($list.Count -eq 0 -and !(gh_rate_limited)) {
     $remote_results = search_remotes $query
     if (!$remote_results) {
         warn 'No matches found.'
